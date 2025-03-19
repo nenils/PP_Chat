@@ -4,7 +4,7 @@ from transformers import LEDTokenizer, LEDForConditionalGeneration
 from peft import PeftModel
 
 # Define model directory and base model
-model_dir_legal_peft = "/path/to/local/directory/legal-led-summary-training-1742381354/checkpoint-350"  # Update this path
+model_dir_legal_peft = "/legal-led-summary-training-1742381354/checkpoint-350"
 base_model_name = "nsi319/legal-led-base-16384"
 
 # Load tokenizer and model
