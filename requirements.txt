@@ -1,0 +1,8 @@
+streamlit
+torch
+transformers
+peft
+ollama
+watchdog
+langchain
+langchain-community
