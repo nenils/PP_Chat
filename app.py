@@ -27,29 +27,47 @@ def load_model():
 tokenizer, model, device = load_model()
 
 # Function to summarize text
+# Function to summarize text with structured output
 def summarize_text(text, max_length=508):
-    # Tokenize input
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=16048)
+    # Define the prompt structure
+    prompt = (
+        "Summarize the following privacy policy with the following structure:\n\n"
+        "**TL;DR:** A concise summary in 2-3 sentences.\n\n"
+        "**Detailed Summary:**\n"
+        "- **Introduction:** Briefly introduce the company’s stance on privacy.\n"
+        "- **Data Collection:** Outline what personal data is collected.\n"
+        "- **Data Usage:** Explain how the collected data is used.\n"
+        "- **Data Sharing:** Describe who the data is shared with and under what conditions.\n"
+        "- **User Controls:** Explain how users can manage their data.\n"
+        "- **Legal Considerations:** Mention compliance with laws and any legal obligations.\n"
+        "- **Important Notes:** List key points regarding user rights and protections.\n\n"
+        "Ensure the summary is structured, clear, and easy to understand.\n\n"
+        "Privacy Policy:\n"
+        f"{text}"
+    )
+
+    # Tokenize input with adjusted length
+    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=16048)
     inputs = {key: val.to(device) for key, val in inputs.items()}
-    
-    # Generate summary
+
+    # Generate structured summary
     summary_ids = model.generate(
         input_ids=inputs["input_ids"],
         max_length=max_length,
-        num_beams=5,
+        num_beams=7,  # Increased for better quality
         no_repeat_ngram_size=3,
         early_stopping=True,
-        temperature=0.7,
-        top_p=0.9,
-        top_k=50,
+        temperature=0.5,  # Lowered for more deterministic output
+        top_p=0.8,
+        top_k=40,
         do_sample=True
     )
-    
+
     # Decode and return summary
     return tokenizer.decode(summary_ids[0], skip_special_tokens=True)
 
 # Streamlit UI
-st.title("Legal Document Summarization Chatbot")
+st.title("Privacy Policies Summarization Chatbot")
 
 # Chatbot UI
 if "messages" not in st.session_state:
@@ -59,7 +77,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-user_input = st.chat_input("Enter legal text for summarization...")
+user_input = st.chat_input("Enter genetic testing privacy policy for summarization...")
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
     
