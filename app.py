@@ -3,6 +3,15 @@ import torch
 from transformers import LEDTokenizer, LEDForConditionalGeneration, AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 import os
+from huggingface_hub import login
+
+# ------------------ HUGGING FACE LOGIN ------------------ #
+# Access the token from Streamlit secrets (when deployed) or environment variables (local)
+hf_token = st.secrets.get("HUGGINGFACE_HUB", os.environ.get("HUGGINGFACE_HUB"))
+if hf_token:
+    login(token=hf_token)
+else:
+    st.warning("Hugging Face token not found. Please set HUGGINGFACE_HUB in secrets or environment variables.")
 
 # ------------------ PAGE SETUP ------------------ #
 st.set_page_config(page_title="Genetic Privacy Policy Chatbot", layout="centered")
@@ -46,22 +55,30 @@ tokenizer_summary, model_summary, device_summary = load_summary_model()
 # ------------------ LOAD CHAT MODEL ------------------ #
 @st.cache_resource
 def load_qa_model():
-    # Using a more practical model for Q&A since the original model may not be accessible
-    qa_model_name = "meta-llama/Llama-2-7b-chat-hf"
+    qa_model_name = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
     
     try:
-        tokenizer_qa = AutoTokenizer.from_pretrained(qa_model_name)
+        tokenizer_qa = AutoTokenizer.from_pretrained(
+            qa_model_name,
+            use_auth_token=True
+        )
+        
         model_qa = AutoModelForCausalLM.from_pretrained(
             qa_model_name,
             torch_dtype=torch.bfloat16,
             device_map="auto",
-            use_auth_token=True if "HUGGINGFACE_HUB" in os.environ else False
+            use_auth_token=True
         )
+        
+        # Apply chat template for instruction following
+        tokenizer_qa.chat_template = "{% if not add_generation_prompt is defined %}{% set add_generation_prompt = false %}{% endif %}{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
+        
         device_qa = model_qa.device
         model_qa.eval()
         return tokenizer_qa, model_qa, device_qa
     except Exception as e:
         st.error(f"Failed to load Q&A model: {str(e)}")
+        st.error("Please ensure you have access to the model and your Hugging Face token is valid.")
         return None, None, None
 
 tokenizer_qa, model_qa, device_qa = load_qa_model()
@@ -105,18 +122,37 @@ def answer_question(question, context):
     if tokenizer_qa is None or model_qa is None:
         return "Q&A functionality is currently unavailable. Please try again later."
     
-    prompt = f"Context:\n{context}\n\nQuestion: {question}\nAnswer:"
-    inputs = tokenizer_qa(prompt, return_tensors="pt", return_token_type_ids=False).to(device_qa)
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant that answers questions about privacy policies."},
+        {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
+    ]
     
-    with torch.no_grad():
-        outputs = model_qa.generate(
-            **inputs, 
-            max_new_tokens=200,
-            temperature=0.7,
-            top_p=0.9
+    try:
+        # Apply chat template
+        prompt = tokenizer_qa.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
         )
-    
-    return tokenizer_qa.decode(outputs[0], skip_special_tokens=True)
+        
+        inputs = tokenizer_qa(prompt, return_tensors="pt").to(device_qa)
+        
+        with torch.no_grad():
+            outputs = model_qa.generate(
+                **inputs,
+                max_new_tokens=512,
+                temperature=0.7,
+                top_p=0.9,
+                do_sample=True,
+                pad_token_id=tokenizer_qa.eos_token_id
+            )
+        
+        # Decode and clean up the response
+        response = tokenizer_qa.decode(outputs[0][inputs.input_ids.shape[-1]:], skip_special_tokens=True)
+        return response.strip()
+    except Exception as e:
+        st.error(f"Error generating answer: {str(e)}")
+        return "Sorry, I encountered an error while generating the answer."
 
 # ------------------ CHAT UI ------------------ #
 for message in st.session_state.messages:
@@ -131,10 +167,14 @@ if user_input:
     with st.chat_message("assistant"):
         if mode == "Summarize Policy":
             with st.spinner("Generating summary..."):
-                summary = summarize_text(user_input)
-                st.session_state.last_summary = summary
-                st.markdown(summary)
-                st.session_state.messages.append({"role": "assistant", "content": summary})
+                try:
+                    summary = summarize_text(user_input)
+                    st.session_state.last_summary = summary
+                    st.markdown(summary)
+                    st.session_state.messages.append({"role": "assistant", "content": summary})
+                except Exception as e:
+                    st.error(f"Error generating summary: {str(e)}")
+                    st.session_state.messages.append({"role": "assistant", "content": "Sorry, I couldn't generate a summary."})
 
         elif mode == "Ask a Question":
             if not st.session_state.last_summary:
