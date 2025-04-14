@@ -3,8 +3,6 @@ import torch
 from transformers import LEDTokenizer, LEDForConditionalGeneration, AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 import os
-import os
-#HF_ = os.environ.get("HUGGINGFACE_HUB")
 
 # ------------------ PAGE SETUP ------------------ #
 st.set_page_config(page_title="Genetic Privacy Policy Chatbot", layout="centered")
@@ -37,7 +35,7 @@ def load_summary_model():
     base_model = LEDForConditionalGeneration.from_pretrained(base_model_name, torch_dtype=torch.bfloat16)
     model = PeftModel.from_pretrained(base_model, model_dir_legal_peft, torch_dtype=torch.bfloat16, is_trainable=False)
 
-    device = "cpu"  # or "cuda" if available
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
     model.eval()
 
@@ -48,24 +46,25 @@ tokenizer_summary, model_summary, device_summary = load_summary_model()
 # ------------------ LOAD CHAT MODEL ------------------ #
 @st.cache_resource
 def load_qa_model():
-    qa_model_name = "meta-llama/Llama-4-Maverick-17B-128E-Original"
+    # Using a more practical model for Q&A since the original model may not be accessible
+    qa_model_name = "meta-llama/Llama-2-7b-chat-hf"
+    
+    try:
+        tokenizer_qa = AutoTokenizer.from_pretrained(qa_model_name)
+        model_qa = AutoModelForCausalLM.from_pretrained(
+            qa_model_name,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            use_auth_token=True if "HUGGINGFACE_HUB" in os.environ else False
+        )
+        device_qa = model_qa.device
+        model_qa.eval()
+        return tokenizer_qa, model_qa, device_qa
+    except Exception as e:
+        st.error(f"Failed to load Q&A model: {str(e)}")
+        return None, None, None
 
-    tokenizer_qa = AutoTokenizer.from_pretrained(
-        qa_model_name,
-        use_auth_token=True  # required if it's gated
-    )
-
-    model_qa = AutoModelForCausalLM.from_pretrained(
-        qa_model_name,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",  # let Transformers place the model on the appropriate device
-        use_auth_token=True
-    )
-
-    device_qa = model_qa.device  # get assigned device from auto-mapping
-
-    model_qa.eval()
-    return tokenizer_qa, model_qa, device_qa
+tokenizer_qa, model_qa, device_qa = load_qa_model()
 
 # ------------------ SUMMARIZATION FUNCTION ------------------ #
 def summarize_text(text, max_length=1016):
@@ -73,7 +72,7 @@ def summarize_text(text, max_length=1016):
         "Summarize the following privacy policy with the following structure:\n\n"
         "**TL;DR:** A concise summary in 2-3 sentences.\n\n"
         "**Detailed Summary:**\n"
-        "- **Introduction:** Briefly introduce the company’s stance on privacy.\n"
+        "- **Introduction:** Briefly introduce the company's stance on privacy.\n"
         "- **Data Collection:** Outline what personal data is collected.\n"
         "- **Data Usage:** Explain how the collected data is used.\n"
         "- **Data Sharing:** Describe who the data is shared with and under what conditions.\n"
@@ -103,9 +102,20 @@ def summarize_text(text, max_length=1016):
 
 # ------------------ Q&A FUNCTION ------------------ #
 def answer_question(question, context):
+    if tokenizer_qa is None or model_qa is None:
+        return "Q&A functionality is currently unavailable. Please try again later."
+    
     prompt = f"Context:\n{context}\n\nQuestion: {question}\nAnswer:"
     inputs = tokenizer_qa(prompt, return_tensors="pt", return_token_type_ids=False).to(device_qa)
-    outputs = model_qa.generate(**inputs, max_new_tokens=200)
+    
+    with torch.no_grad():
+        outputs = model_qa.generate(
+            **inputs, 
+            max_new_tokens=200,
+            temperature=0.7,
+            top_p=0.9
+        )
+    
     return tokenizer_qa.decode(outputs[0], skip_special_tokens=True)
 
 # ------------------ CHAT UI ------------------ #
@@ -120,13 +130,18 @@ if user_input:
 
     with st.chat_message("assistant"):
         if mode == "Summarize Policy":
-            summary = summarize_text(user_input)
-            st.session_state.last_summary = summary  # Save for future Q&A
-            st.markdown(summary)
-            st.session_state.messages.append({"role": "assistant", "content": summary})
+            with st.spinner("Generating summary..."):
+                summary = summarize_text(user_input)
+                st.session_state.last_summary = summary
+                st.markdown(summary)
+                st.session_state.messages.append({"role": "assistant", "content": summary})
 
         elif mode == "Ask a Question":
-            context = st.session_state.last_summary or "No summary available yet. Please summarize a policy first."
-            answer = answer_question(user_input, context=context)
-            st.markdown(answer)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
+            if not st.session_state.last_summary:
+                st.warning("Please summarize a policy first before asking questions.")
+                st.session_state.messages.append({"role": "assistant", "content": "Please summarize a policy first before asking questions."})
+            else:
+                with st.spinner("Generating answer..."):
+                    answer = answer_question(user_input, context=st.session_state.last_summary)
+                    st.markdown(answer)
+                    st.session_state.messages.append({"role": "assistant", "content": answer})
