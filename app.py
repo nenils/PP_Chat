@@ -68,7 +68,7 @@ def load_qa_model():
     return tokenizer, model, device
 
 # ------------------ SUMMARIZATION FUNCTION ------------------ #
-def summarize_text(text, max_length=508):
+def summarize_text(text, max_length=1016):
     prompt = (
         "Summarize the following privacy policy with the following structure:\n\n"
         "**TL;DR:** A concise summary in 2-3 sentences.\n\n"
