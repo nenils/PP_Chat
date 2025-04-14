@@ -4,7 +4,7 @@ from transformers import LEDTokenizer, LEDForConditionalGeneration, AutoTokenize
 from peft import PeftModel
 import os
 import os
-HF_ = os.environ.get("HUGGINGFACE_HUB")
+#HF_ = os.environ.get("HUGGINGFACE_HUB")
 
 # ------------------ PAGE SETUP ------------------ #
 st.set_page_config(page_title="Genetic Privacy Policy Chatbot", layout="centered")
@@ -50,22 +50,22 @@ tokenizer_summary, model_summary, device_summary = load_summary_model()
 def load_qa_model():
     qa_model_name = "meta-llama/Llama-4-Maverick-17B-128E-Original"
 
-    tokenizer = AutoTokenizer.from_pretrained(
+    tokenizer_qa = AutoTokenizer.from_pretrained(
         qa_model_name,
-        use_auth_token=HF_  # required if it's gated
+        use_auth_token=True  # required if it's gated
     )
 
-    model = AutoModelForCausalLM.from_pretrained(
+    model_qa = AutoModelForCausalLM.from_pretrained(
         qa_model_name,
         torch_dtype=torch.bfloat16,
         device_map="auto",  # let Transformers place the model on the appropriate device
-        use_auth_token=HF_
+        use_auth_token=True
     )
 
-    device = model.device  # get assigned device from auto-mapping
+    device_qa = model_qa.device  # get assigned device from auto-mapping
 
-    model.eval()
-    return tokenizer, model, device
+    model_qa.eval()
+    return tokenizer_qa, model_qa, device_qa
 
 # ------------------ SUMMARIZATION FUNCTION ------------------ #
 def summarize_text(text, max_length=1016):
