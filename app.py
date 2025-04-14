@@ -2,6 +2,8 @@ import streamlit as st
 import torch
 from transformers import LEDTokenizer, LEDForConditionalGeneration, AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
+import os
+os.environ["HUGGINGFACE_HUB_TOKEN"] = "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"
 
 # ------------------ PAGE SETUP ------------------ #
 st.set_page_config(page_title="Genetic Privacy Policy Chatbot", layout="centered")
