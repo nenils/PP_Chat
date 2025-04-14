@@ -4,7 +4,7 @@ from transformers import LEDTokenizer, LEDForConditionalGeneration, AutoTokenize
 from peft import PeftModel
 import os
 import os
-HF_TOKEN = os.environ.get("HUGGINGFACE_HUB_TOKEN")
+HF_ = os.environ.get("HUGGINGFACE_HUB")
 
 # ------------------ PAGE SETUP ------------------ #
 st.set_page_config(page_title="Genetic Privacy Policy Chatbot", layout="centered")
@@ -52,14 +52,14 @@ def load_qa_model():
 
     tokenizer = AutoTokenizer.from_pretrained(
         qa_model_name,
-        use_auth_token=HF_TOKEN  # required if it's gated
+        use_auth_token=HF_  # required if it's gated
     )
 
     model = AutoModelForCausalLM.from_pretrained(
         qa_model_name,
         torch_dtype=torch.bfloat16,
         device_map="auto",  # let Transformers place the model on the appropriate device
-        use_auth_token=HF_TOKEN
+        use_auth_token=HF_
     )
 
     device = model.device  # get assigned device from auto-mapping
