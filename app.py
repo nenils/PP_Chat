@@ -1,12 +1,11 @@
 import streamlit as st
 import torch
-from transformers import LEDTokenizer, LEDForConditionalGeneration, AutoTokenizer, AutoModelForCausalLM
+from transformers import LEDTokenizer, LEDForConditionalGeneration, pipeline
 from peft import PeftModel
 import os
 from huggingface_hub import login
 
 # ------------------ HUGGING FACE LOGIN ------------------ #
-# Access the token from Streamlit secrets (when deployed) or environment variables (local)
 hf_token = st.secrets.get("HUGGINGFACE_HUB", os.environ.get("HUGGINGFACE_HUB"))
 if hf_token:
     login(token=hf_token)
@@ -52,36 +51,26 @@ def load_summary_model():
 
 tokenizer_summary, model_summary, device_summary = load_summary_model()
 
-# ------------------ LOAD CHAT MODEL ------------------ #
+# ------------------ LOAD CHAT PIPELINE ------------------ #
 @st.cache_resource
-def load_qa_model():
-    qa_model_name = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
+def load_qa_pipeline():
+    model_name = "meta-llama/Llama-4-Scout-17B-16E-Instruct"
     
     try:
-        tokenizer_qa = AutoTokenizer.from_pretrained(
-            qa_model_name,
-            use_auth_token=True
-        )
-        
-        model_qa = AutoModelForCausalLM.from_pretrained(
-            qa_model_name,
+        qa_pipeline = pipeline(
+            "text-generation",
+            model=model_name,
             torch_dtype=torch.bfloat16,
             device_map="auto",
             use_auth_token=True
         )
-        
-        # Apply chat template for instruction following
-        tokenizer_qa.chat_template = "{% if not add_generation_prompt is defined %}{% set add_generation_prompt = false %}{% endif %}{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"
-        
-        device_qa = model_qa.device
-        model_qa.eval()
-        return tokenizer_qa, model_qa, device_qa
+        return qa_pipeline
     except Exception as e:
-        st.error(f"Failed to load Q&A model: {str(e)}")
+        st.error(f"Failed to load Q&A pipeline: {str(e)}")
         st.error("Please ensure you have access to the model and your Hugging Face token is valid.")
-        return None, None, None
+        return None
 
-tokenizer_qa, model_qa, device_qa = load_qa_model()
+qa_pipeline = load_qa_pipeline()
 
 # ------------------ SUMMARIZATION FUNCTION ------------------ #
 def summarize_text(text, max_length=1016):
@@ -119,37 +108,33 @@ def summarize_text(text, max_length=1016):
 
 # ------------------ Q&A FUNCTION ------------------ #
 def answer_question(question, context):
-    if tokenizer_qa is None or model_qa is None:
+    if qa_pipeline is None:
         return "Q&A functionality is currently unavailable. Please try again later."
     
-    messages = [
-        {"role": "system", "content": "You are a helpful assistant that answers questions about privacy policies."},
-        {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
-    ]
+    prompt = f"""<|im_start|>system
+You are a helpful assistant that answers questions about privacy policies.<|im_end|>
+<|im_start|>user
+Context:
+{context}
+
+Question: {question}<|im_end|>
+<|im_start|>assistant
+"""
     
     try:
-        # Apply chat template
-        prompt = tokenizer_qa.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
+        response = qa_pipeline(
+            prompt,
+            max_new_tokens=512,
+            temperature=0.7,
+            top_p=0.9,
+            do_sample=True,
+            eos_token_id=2  # Llama's eos token
         )
         
-        inputs = tokenizer_qa(prompt, return_tensors="pt").to(device_qa)
-        
-        with torch.no_grad():
-            outputs = model_qa.generate(
-                **inputs,
-                max_new_tokens=512,
-                temperature=0.7,
-                top_p=0.9,
-                do_sample=True,
-                pad_token_id=tokenizer_qa.eos_token_id
-            )
-        
-        # Decode and clean up the response
-        response = tokenizer_qa.decode(outputs[0][inputs.input_ids.shape[-1]:], skip_special_tokens=True)
-        return response.strip()
+        # Extract just the assistant's response
+        full_response = response[0]['generated_text']
+        assistant_response = full_response.split("<|im_start|>assistant\n")[-1].split("<|im_end|>")[0]
+        return assistant_response.strip()
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
         return "Sorry, I encountered an error while generating the answer."
