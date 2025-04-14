@@ -1,35 +1,64 @@
 import streamlit as st
 import torch
-from transformers import LEDTokenizer, LEDForConditionalGeneration
+from transformers import LEDTokenizer, LEDForConditionalGeneration, AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 
-# Define model directory and base model
-model_dir_legal_peft = "legal_led_for_summary_bigger_model"
-base_model_name = "nsi319/legal-led-base-16384"
+# ------------------ PAGE SETUP ------------------ #
+st.set_page_config(page_title="Genetic Privacy Policy Chatbot", layout="centered")
+st.title("🧬 Privacy Policies Summarization Chatbot")
 
-# Load tokenizer and model
-@st.cache_resource  # Cache the model to avoid reloading
-def load_model():
-    # Load tokenizer from the local directory
+st.markdown("""
+This is a chatbot that helps you to summarize privacy policies of genetic testing companies.  
+You can just copy the text in the privacy statement and paste it down below.  
+I will create a concise summary for you and you can ask some questions if you like.
+""")
+
+# ------------------ SIDEBAR MODE SWITCH ------------------ #
+st.sidebar.title("🛠️ Options")
+mode = st.sidebar.radio("Choose mode:", ["Summarize Policy", "Ask a Question"])
+
+# ------------------ STATE INITIALIZATION ------------------ #
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "last_summary" not in st.session_state:
+    st.session_state.last_summary = ""
+
+# ------------------ LOAD SUMMARIZATION MODEL ------------------ #
+@st.cache_resource
+def load_summary_model():
+    model_dir_legal_peft = "legal_led_for_summary_bigger_model"
+    base_model_name = "nsi319/legal-led-base-16384"
+
     tokenizer = LEDTokenizer.from_pretrained(model_dir_legal_peft)
-    
-    # Load base model
     base_model = LEDForConditionalGeneration.from_pretrained(base_model_name, torch_dtype=torch.bfloat16)
-    
-    # Load adapter weights
-    device = "cpu"
     model = PeftModel.from_pretrained(base_model, model_dir_legal_peft, torch_dtype=torch.bfloat16, is_trainable=False)
+
+    device = "cpu"  # or "cuda" if available
     model.to(device)
     model.eval()
-    
+
     return tokenizer, model, device
 
-tokenizer, model, device = load_model()
+tokenizer_summary, model_summary, device_summary = load_summary_model()
 
-# Function to summarize text
-# Function to summarize text with structured output
+# ------------------ LOAD CHAT MODEL ------------------ #
+@st.cache_resource
+def load_qa_model():
+    qa_model_name = "tiiuae/falcon-7b-instruct"  # or another LLaMA-style model
+    tokenizer = AutoTokenizer.from_pretrained(qa_model_name)
+    model = AutoModelForCausalLM.from_pretrained(qa_model_name, torch_dtype=torch.bfloat16)
+
+    device = "cpu"  # or "cuda"
+    model.to(device)
+    model.eval()
+
+    return tokenizer, model, device
+
+tokenizer_qa, model_qa, device_qa = load_qa_model()
+
+# ------------------ SUMMARIZATION FUNCTION ------------------ #
 def summarize_text(text, max_length=508):
-    # Define the prompt structure
     prompt = (
         "Summarize the following privacy policy with the following structure:\n\n"
         "**TL;DR:** A concise summary in 2-3 sentences.\n\n"
@@ -41,49 +70,53 @@ def summarize_text(text, max_length=508):
         "- **User Controls:** Explain how users can manage their data.\n"
         "- **Legal Considerations:** Mention compliance with laws and any legal obligations.\n"
         "- **Important Notes:** List key points regarding user rights and protections.\n\n"
-        "Ensure the summary is structured, clear, and easy to understand.\n\n"
         "Privacy Policy:\n"
         f"{text}"
     )
 
-    # Tokenize input with adjusted length
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=16048)
-    inputs = {key: val.to(device) for key, val in inputs.items()}
+    inputs = tokenizer_summary(prompt, return_tensors="pt", truncation=True, max_length=16048)
+    inputs = {key: val.to(device_summary) for key, val in inputs.items()}
 
-    # Generate structured summary
-    summary_ids = model.generate(
+    summary_ids = model_summary.generate(
         input_ids=inputs["input_ids"],
         max_length=max_length,
-        num_beams=7,  # Increased for better quality
+        num_beams=7,
         no_repeat_ngram_size=3,
         early_stopping=True,
-        temperature=0.5,  # Lowered for more deterministic output
+        temperature=0.5,
         top_p=0.8,
         top_k=40,
         do_sample=True
     )
 
-    # Decode and return summary
-    return tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+    return tokenizer_summary.decode(summary_ids[0], skip_special_tokens=True)
 
-# Streamlit UI
-st.title("Privacy Policies Summarization Chatbot")
+# ------------------ Q&A FUNCTION ------------------ #
+def answer_question(question, context):
+    prompt = f"Context:\n{context}\n\nQuestion: {question}\nAnswer:"
+    inputs = tokenizer_qa(prompt, return_tensors="pt", return_token_type_ids=False).to(device_qa)
+    outputs = model_qa.generate(**inputs, max_new_tokens=200)
+    return tokenizer_qa.decode(outputs[0], skip_special_tokens=True)
 
-# Chatbot UI
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
+# ------------------ CHAT UI ------------------ #
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-user_input = st.chat_input("Enter genetic testing privacy policy for summarization...")
+user_input = st.chat_input("Enter your input here...")
+
 if user_input:
     st.session_state.messages.append({"role": "user", "content": user_input})
-    
-    # Generate summary
+
     with st.chat_message("assistant"):
-        summary = summarize_text(user_input)
-        st.markdown(summary)
-    
-    st.session_state.messages.append({"role": "assistant", "content": summary})
+        if mode == "Summarize Policy":
+            summary = summarize_text(user_input)
+            st.session_state.last_summary = summary  # Save for future Q&A
+            st.markdown(summary)
+            st.session_state.messages.append({"role": "assistant", "content": summary})
+
+        elif mode == "Ask a Question":
+            context = st.session_state.last_summary or "No summary available yet. Please summarize a policy first."
+            answer = answer_question(user_input, context=context)
+            st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
