@@ -45,17 +45,24 @@ tokenizer_summary, model_summary, device_summary = load_summary_model()
 # ------------------ LOAD CHAT MODEL ------------------ #
 @st.cache_resource
 def load_qa_model():
-    qa_model_name = "tiiuae/falcon-7b-instruct"  # or another LLaMA-style model
-    tokenizer = AutoTokenizer.from_pretrained(qa_model_name)
-    model = AutoModelForCausalLM.from_pretrained(qa_model_name, torch_dtype=torch.bfloat16)
+    qa_model_name = "meta-llama/Llama-4-Maverick-17B-128E-Original"
 
-    device = "cpu"  # or "cuda"
-    model.to(device)
+    tokenizer = AutoTokenizer.from_pretrained(
+        qa_model_name,
+        use_auth_token=True  # required if it's gated
+    )
+
+    model = AutoModelForCausalLM.from_pretrained(
+        qa_model_name,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",  # let Transformers place the model on the appropriate device
+        use_auth_token=True
+    )
+
+    device = model.device  # get assigned device from auto-mapping
+
     model.eval()
-
     return tokenizer, model, device
-
-tokenizer_qa, model_qa, device_qa = load_qa_model()
 
 # ------------------ SUMMARIZATION FUNCTION ------------------ #
 def summarize_text(text, max_length=508):
