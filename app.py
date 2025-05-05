@@ -4,6 +4,11 @@ from transformers import LEDTokenizer, LEDForConditionalGeneration, pipeline
 from peft import PeftModel
 import os
 from huggingface_hub import login
+import requests
+import json
+
+# ------------------ API KEY SETUP ------------------ #
+API_KEY = st.secrets.get("OPENROUTER_API_KEY", "sk-or-v1-...")  # Set in Streamlit secrets
 
 # ------------------ HUGGING FACE LOGIN ------------------ #
 hf_token = st.secrets.get("HUGGINGFACE_HUB", os.environ.get("HUGGINGFACE_HUB"))
@@ -36,7 +41,7 @@ if "last_summary" not in st.session_state:
 # ------------------ LOAD SUMMARIZATION MODEL ------------------ #
 @st.cache_resource
 def load_summary_model():
-    model_dir_legal_peft = "legal_led_for_summary_bigger_model"
+    model_dir_legal_peft = "legal_led_final_version"
     base_model_name = "nsi319/legal-led-base-16384"
 
     tokenizer = LEDTokenizer.from_pretrained(model_dir_legal_peft)
@@ -70,7 +75,7 @@ def load_qa_pipeline():
         st.error("Please ensure you have access to the model and your Hugging Face token is valid.")
         return None
 
-qa_pipeline = load_qa_pipeline()
+#qa_pipeline = load_qa_pipeline()
 
 # ------------------ SUMMARIZATION FUNCTION ------------------ #
 def summarize_text(text, max_length=1016):
@@ -108,36 +113,38 @@ def summarize_text(text, max_length=1016):
 
 # ------------------ Q&A FUNCTION ------------------ #
 def answer_question(question, context):
-    if qa_pipeline is None:
-        return "Q&A functionality is currently unavailable. Please try again later."
-    
-    prompt = f"""<|im_start|>system
-You are a helpful assistant that answers questions about privacy policies.<|im_end|>
-<|im_start|>user
+    prompt = f"""
 Context:
 {context}
 
-Question: {question}<|im_end|>
-<|im_start|>assistant
+Question: {question}
 """
-    
+
     try:
-        response = qa_pipeline(
-            prompt,
-            max_new_tokens=512,
-            temperature=0.7,
-            top_p=0.9,
-            do_sample=True,
-            eos_token_id=2  # Llama's eos token
+        response = requests.post(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json",
+            },
+            data=json.dumps({
+                "model": "meta-llama/llama-4-maverick:free",
+                "messages": [
+                    {"role": "user", "content": f"You are a helpful assistant answering questions about genetic privacy policies. {prompt}"}
+                ],
+                "temperature": 0.5
+            }),
+            timeout=30
         )
+
+        if response.status_code == 200:
+            response_data = response.json()
+            return response_data["choices"][0]["message"]["content"]
+        else:
+            return f"Error from API: {response.status_code} - {response.text}"
         
-        # Extract just the assistant's response
-        full_response = response[0]['generated_text']
-        assistant_response = full_response.split("<|im_start|>assistant\n")[-1].split("<|im_end|>")[0]
-        return assistant_response.strip()
     except Exception as e:
-        st.error(f"Error generating answer: {str(e)}")
-        return "Sorry, I encountered an error while generating the answer."
+        return f"Exception during API call: {str(e)}"
 
 # ------------------ CHAT UI ------------------ #
 for message in st.session_state.messages:
